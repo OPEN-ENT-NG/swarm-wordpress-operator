@@ -140,6 +140,23 @@ public class WordpressInstallerReconciler implements Reconciler<Wordpress> {
                     new EnvVar("WP_SITE_PATH", siteSpec.path(), null)
             ));
 
+            // Configure the second initContainer wp-init
+            if (wpStatefulSet.getSpec().getTemplate().getSpec().getInitContainers().size() > 1) {
+                wpStatefulSet.getSpec().getTemplate().getSpec().getInitContainers().get(1).setEnv(Arrays.asList(
+                        new EnvVar("WORDPRESS_DB_HOST", dbSpec.host() + ":" + dbSpec.port(), null),
+                        new EnvVar("WORDPRESS_DB_NAME", dbSpec.name(), null),
+                        new EnvVar("WORDPRESS_DB_USER", dbSpec.user(), null),
+                        new EnvVar("WORDPRESS_DB_PASSWORD", null, new EnvVarSourceBuilder()
+                                .withNewSecretKeyRef(dbSpec.passwordSecretKey(), dbSpec.passwordSecretName(), false)
+                                .build()
+                        ),
+                        new EnvVar("HTTP_HOST", siteSpec.host(), null),
+                        new EnvVar("WP_ADMIN_USER", siteSpec.adminEmail(), null),
+                        new EnvVar("WP_ADMIN_PASSWORD", siteSpec.adminPassword(), null),
+                        new EnvVar("WP_ADMIN_EMAIL", siteSpec.adminEmail(), null)
+                ));
+            }
+
             k8sClient.apps().statefulSets().inNamespace(namespace).resource(wpStatefulSet).createOr(NonDeletingOperation::update);
         }
 

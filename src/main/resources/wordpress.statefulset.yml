@@ -18,6 +18,69 @@ spec:
       labels:
         app: wordpress-site-id
     spec:
+      initContainers:
+        - name: wordpress-copy-files
+          image: wordpress:php8.3-apache
+          command:
+                - /bin/sh
+                - -c
+                - |
+                  # Copier les fichiers WordPress si le volume est vide
+                  if [ ! -f /var/www/html/index.php ]; then
+                    echo "📦 Copie des fichiers WordPress..."
+                    cp -r /usr/src/wordpress/* /var/www/html
+                  fi
+          volumeMounts:
+            - name: wordpress-data
+              mountPath: /var/www/html
+        - name: wp-init
+          image: wordpress:cli
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: db_host
+            - name: WORDPRESS_DB_NAME
+              value: db_name
+            - name: WORDPRESS_DB_USER
+              value: db_user
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-password-secret-name
+                  key: db_password_secret_key
+            - name: HTTP_HOST
+              value: wordpress-base-url
+            - name: WP_ADMIN_USER
+              value: admin
+            - name: WP_ADMIN_PASSWORD
+              value: password
+            - name: WP_ADMIN_EMAIL
+              value: admin@example.com
+          volumeMounts:
+            - name: wordpress-data
+              mountPath: /var/www/html
+            - name: wordpress-config
+              mountPath: /var/www/html/wp-config.php
+              subPath: wp-config.php
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Installer WordPress si pas déjà installé
+              wp core is-installed --path=/var/www/html
+              rc=$?
+
+              if [ "$rc" -eq 0 ]; then
+                echo "✅ WordPress déjà installé"
+              else
+                echo "🚀 Installation WordPress..."
+                wp core install \
+                  --url="$HTTP_HOST" \
+                  --title="Mon site WordPress" \
+                  --admin_user="$WP_ADMIN_USER" \
+                  --admin_password="$WP_ADMIN_PASSWORD" \
+                  --admin_email="$WP_ADMIN_EMAIL" \
+                  --path=/var/www/html
+              fi
       containers:
         - name: wordpress
           image: wordpress:php8.3-apache
@@ -41,13 +104,17 @@ spec:
             - name: WP_SITE_PATH
               value: /wp-site-path
           volumeMounts:
-            - mountPath: /usr/src/wordpress/wp-config.php
-              name: wordpress-config
+            - name: wordpress-data
+              mountPath: /var/www/html
+            - name: wordpress-config
+              mountPath: /var/www/html/wp-config.php
               subPath: wp-config.php
             - mountPath: /etc/apache2/sites-enabled/000-default.conf
               name: apache-config
               subPath: httpd.conf
       volumes:
+        - name: wordpress-data
+          emptyDir: {}
         - name: wordpress-config
           configMap:
             name: wordpress-site-id-wordpress-configmap
