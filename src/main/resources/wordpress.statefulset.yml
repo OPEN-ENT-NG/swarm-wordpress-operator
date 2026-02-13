@@ -18,6 +18,20 @@ spec:
       labels:
         app: wordpress-site-id
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - sites
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "sites"
+        effect: "NoSchedule"
       initContainers:
         - name: wordpress-copy-files
           image: wordpress:php8.3-apache
