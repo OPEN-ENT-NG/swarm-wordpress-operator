@@ -126,6 +126,13 @@ spec:
             - mountPath: /etc/apache2/sites-enabled/000-default.conf
               name: apache-config
               subPath: httpd.conf
+          resources:
+            requests:
+              memory: "30Mi"
+              cpu: "5m"
+            limits:
+              memory: "50Mi"
+              cpu: "50m"
       volumes:
         - name: wordpress-data
           emptyDir: {}
