@@ -7,6 +7,7 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 
 import fr.cgi.learninghub.swarm.resource.Wordpress;
 import fr.cgi.learninghub.swarm.resource.WordpressInstallerSpec;
@@ -38,6 +39,7 @@ public class WordpressInstallerReconciler implements Reconciler<Wordpress> {
 
         WordpressInstallerSpec.SiteSpec siteSpec = resource.getSpec().site();
         WordpressInstallerSpec.DatabaseSpec dbSpec = resource.getSpec().database();
+        WordpressInstallerSpec.StorageSpec storageSpec = resource.getSpec().storage();
 
         // Create the Apache ConfigMap if it doesn't exist
         ConfigMap apacheConfigMap = k8sClient.configMaps().inNamespace(namespace).withName(name).get();
@@ -104,6 +106,42 @@ public class WordpressInstallerReconciler implements Reconciler<Wordpress> {
             k8sClient.services().inNamespace(namespace).resource(wpService).createOr(NonDeletingOperation::update);
         }
 
+            // Create the Wordpress PVC if it doesn't exist
+            String pvcName = name + "-wordpress-data";
+            PersistentVolumeClaim wpPvc = k8sClient.persistentVolumeClaims().inNamespace(namespace).withName(pvcName).get();
+            if (wpPvc == null) {
+                String size = storageSpec != null && storageSpec.size() != null ? storageSpec.size() : "1Gi";
+                List<String> accessModes = storageSpec != null && storageSpec.accessModes() != null && !storageSpec.accessModes().isEmpty()
+                    ? storageSpec.accessModes()
+                    : Collections.singletonList("ReadWriteOnce");
+
+                PersistentVolumeClaimBuilder pvcBuilder = new PersistentVolumeClaimBuilder()
+                    .withNewMetadata()
+                    .withName(pvcName)
+                    .withNamespace(namespace)
+                    .withOwnerReferences(Collections.singletonList(new OwnerReferenceBuilder()
+                        .withUid(resource.getMetadata().getUid())
+                        .withApiVersion(resource.getApiVersion())
+                        .withName(name)
+                        .withKind(resource.getKind())
+                        .build()
+                    ))
+                    .endMetadata()
+                    .withNewSpec()
+                    .withAccessModes(accessModes)
+                    .withNewResources()
+                    .addToRequests("storage", new Quantity(size))
+                    .endResources()
+                    .endSpec();
+
+                if (storageSpec != null && storageSpec.storageClassName() != null) {
+                pvcBuilder.editSpec().withStorageClassName(storageSpec.storageClassName()).endSpec();
+                }
+
+                wpPvc = pvcBuilder.build();
+                k8sClient.persistentVolumeClaims().inNamespace(namespace).resource(wpPvc).createOr(NonDeletingOperation::update);
+            }
+
         // Create the Wordpress StatefulSet if it doesn't exist
         StatefulSet wpStatefulSet = k8sClient.apps().statefulSets().inNamespace(namespace).withName(name).get();
         if (wpStatefulSet == null) {
@@ -126,6 +164,12 @@ public class WordpressInstallerReconciler implements Reconciler<Wordpress> {
             wpStatefulSet.getSpec().getTemplate().getSpec().getVolumes().forEach(volume -> {
                 if (volume.getConfigMap() != null)
                     volume.getConfigMap().setName(volume.getConfigMap().getName().replace("wordpress-site-id", name));
+                if ("wordpress-data".equals(volume.getName())) {
+                    volume.setEmptyDir(null);
+                    volume.setPersistentVolumeClaim(new PersistentVolumeClaimVolumeSourceBuilder()
+                            .withClaimName(pvcName)
+                            .build());
+                }
             });
 
             wpStatefulSet.getSpec().getTemplate().getSpec().getContainers().getFirst().setEnv(Arrays.asList(
@@ -158,6 +202,31 @@ public class WordpressInstallerReconciler implements Reconciler<Wordpress> {
             }
 
             k8sClient.apps().statefulSets().inNamespace(namespace).resource(wpStatefulSet).createOr(NonDeletingOperation::update);
+        } else {
+            boolean needsUpdate = false;
+            if (wpStatefulSet.getSpec() != null
+                    && wpStatefulSet.getSpec().getTemplate() != null
+                    && wpStatefulSet.getSpec().getTemplate().getSpec() != null
+                    && wpStatefulSet.getSpec().getTemplate().getSpec().getVolumes() != null) {
+                for (Volume volume : wpStatefulSet.getSpec().getTemplate().getSpec().getVolumes()) {
+                    if ("wordpress-data".equals(volume.getName())) {
+                        String currentClaim = volume.getPersistentVolumeClaim() != null
+                                ? volume.getPersistentVolumeClaim().getClaimName()
+                                : null;
+                        if (!pvcName.equals(currentClaim)) {
+                            volume.setEmptyDir(null);
+                            volume.setPersistentVolumeClaim(new PersistentVolumeClaimVolumeSourceBuilder()
+                                    .withClaimName(pvcName)
+                                    .build());
+                            needsUpdate = true;
+                        }
+                    }
+                }
+            }
+
+            if (needsUpdate) {
+                k8sClient.apps().statefulSets().inNamespace(namespace).resource(wpStatefulSet).createOr(NonDeletingOperation::update);
+            }
         }
 
         return UpdateControl.noUpdate();
