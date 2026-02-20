@@ -135,7 +135,8 @@ spec:
               cpu: "500m"
       volumes:
         - name: wordpress-data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: wordpress-site-id-wordpress-data
         - name: wordpress-config
           configMap:
             name: wordpress-site-id-wordpress-configmap
